@@ -1,0 +1,3 @@
+timestamp_utc,od_pair,origin,destination,time_min,distance_km,avg_speed_kmh,process_time_sec,status
+2026-02-05T18:52:39.457556,Peradeniya → KMTT,"Peradeniya, Sri Lanka","Kandy Municipal Transport Terminal, Sri Lanka",10,5.3,31.8,5.73,success
+2026-02-05T18:52:48.188795,Temple → Railway,"Sri Dalada Maligawa, Kandy, Sri Lanka","Kandy Railway Station, Sri Lanka",3,1.0,20.0,5.66,success
