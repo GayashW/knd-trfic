@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Virtual Floating Car Traffic Monitor for Kandy, Sri Lanka
+GitHub-Actions-safe Google Maps Directions scraper
+"""
+
 import asyncio
 import csv
 import os
@@ -5,94 +11,170 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
-# Kandy OD Pairs
+# ---------------- CONFIG ----------------
+
 OD_PAIRS = [
-    {"name": "Peradeniya_to_KMTT", "origin": "Peradeniya, Kandy", "dest": "KMTT, Kandy"},
-    {"name": "Katugastota_to_KMTT", "origin": "Katugastota, Kandy", "dest": "KMTT, Kandy"},
-    {"name": "KMTT_to_Getambe", "origin": "KMTT, Kandy", "dest": "Getambe, Kandy"}
+    {
+        "name": "Peradeniya to KMTT",
+        "origin": "Peradeniya, Sri Lanka",
+        "destination": "Kandy Municipal Transport Terminal, Kandy, Sri Lanka",
+    },
+    {
+        "name": "Temple of Tooth to Railway Station",
+        "origin": "Sri Dalada Maligawa, Kandy, Sri Lanka",
+        "destination": "Kandy Railway Station, Sri Lanka",
+    },
 ]
 
 CSV_FILE = "kandy_od_traffic.csv"
-CSV_HEADERS = ["timestamp", "od_pair", "time_min", "distance_km", "avg_speed_kmh", "status"]
 
-async def scrape_route(page, od_pair):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    result = {"timestamp": timestamp, "od_pair": od_pair["name"], "status": "failed"}
-    
+CSV_HEADERS = [
+    "timestamp",
+    "od_pair",
+    "origin",
+    "destination",
+    "time_min",
+    "distance_km",
+    "avg_speed_kmh",
+    "process_time_sec",
+    "status",
+]
+
+# ---------------- PARSERS ----------------
+
+def parse_time_minutes(text):
+    hours = re.search(r"(\d+)\s*h", text)
+    mins = re.search(r"(\d+)\s*min", text)
+
+    total = 0
+    if hours:
+        total += int(hours.group(1)) * 60
+    if mins:
+        total += int(mins.group(1))
+
+    return total if total > 0 else None
+
+
+def parse_distance_km(text):
+    km = re.search(r"([\d.]+)\s*km", text)
+    m = re.search(r"([\d.]+)\s*m\b", text)
+
+    if km:
+        return float(km.group(1))
+    if m:
+        return float(m.group(1)) / 1000
+    return None
+
+# ---------------- SCRAPER ----------------
+
+async def handle_consent(page):
+    for frame in page.frames:
+        if "consent.google.com" in frame.url:
+            btn = frame.locator("button:has-text('Accept all')")
+            if await btn.count() > 0:
+                await btn.first.click()
+                await page.wait_for_timeout(2000)
+
+
+async def scrape_route(page, od):
+    start = time.time()
+
+    result = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "od_pair": od["name"],
+        "origin": od["origin"],
+        "destination": od["destination"],
+        "time_min": None,
+        "distance_km": None,
+        "avg_speed_kmh": None,
+        "process_time_sec": 0,
+        "status": "failed",
+    }
+
     try:
-        # Standard Directions URL (More stable than bypass URLs)
-        url = f"https://www.google.com/maps/dir/{od_pair['origin']}/{od_pair['dest']}/"
-        await page.goto(url, wait_until="networkidle", timeout=60000)
+        url = f"https://www.google.com/maps/dir/{od['origin']}/{od['destination']}/"
+        print(f"\nScraping {od['name']}")
 
-        # Handle potential 'Consent' popups automatically
-        if "consent" in page.url:
-            await page.get_by_role("button", name="Accept all").click()
-            await page.wait_for_load_state("networkidle")
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        await handle_consent(page)
 
-        # Stable Selector: The first route result card
-        # We look for the container that has the text 'min' or 'hr'
-        route_card = page.locator('div[id="section-directions-trip-0"]').first
-        await route_card.wait_for(state="visible", timeout=20000)
-        
-        # Extract the content of the card
-        info_text = await route_card.inner_text()
-        
-        # Robust Parsing using Regex
-        time_match = re.search(r'(\d+)\s*(min|hr|h)', info_text)
-        dist_match = re.search(r'([\d.]+)\s*(km|m)', info_text)
+        await page.wait_for_selector("div[role='main']", timeout=60000)
+        await page.wait_for_timeout(3000)
 
-        if time_match and dist_match:
-            # Time logic (handles hours and minutes)
-            raw_time = time_match.group(0).lower()
-            mins = int(re.search(r'\d+', raw_time).group())
-            if 'h' in raw_time: mins *= 60
-            
-            # Distance logic
-            kms = float(dist_match.group(1))
-            if 'm' in dist_match.group(2) and 'k' not in dist_match.group(2):
-                kms /= 1000
+        # Force route selection (CRITICAL)
+        btns = page.locator("div[role='button']:has-text('min')")
+        if await btns.count() > 0:
+            await btns.first.click()
+            await page.wait_for_timeout(2000)
 
-            result.update({
-                "time_min": mins,
-                "distance_km": kms,
-                "avg_speed_kmh": round(kms / (mins / 60), 2),
-                "status": "success"
-            })
-            print(f"✅ {od_pair['name']}: {mins} mins, {kms} km")
-        
+        content = await page.inner_text("div[role='main']")
+
+        time_match = re.search(r"\d+\s*(?:h\s*)?\d*\s*min", content)
+        dist_match = re.search(r"[\d.]+\s*(?:km|m)\b", content)
+
+        if not time_match or not dist_match:
+            raise ValueError("ETA or distance not found")
+
+        result["time_min"] = parse_time_minutes(time_match.group(0))
+        result["distance_km"] = parse_distance_km(dist_match.group(0))
+
+        if result["time_min"] and result["distance_km"]:
+            result["avg_speed_kmh"] = round(
+                result["distance_km"] / (result["time_min"] / 60), 2
+            )
+            result["status"] = "success"
+        else:
+            result["status"] = "incomplete_data"
+
     except Exception as e:
-        print(f"❌ Error on {od_pair['name']}: {str(e)[:50]}")
-    
+        result["status"] = f"error: {str(e)[:40]}"
+
+    result["process_time_sec"] = round(time.time() - start, 2)
+    print(f"Status: {result['status']}")
+
     return result
 
+# ---------------- MAIN ----------------
+
 async def main():
+    results = []
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        browser = await p.chromium.launch(
+            headless=False,   # REQUIRED
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
         )
+
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            locale="en-US",
+            timezone_id="Asia/Colombo",
+        )
+
         page = await context.new_page()
-        
-        all_results = []
-        for pair in OD_PAIRS:
-            res = await scrape_route(page, pair)
-            all_results.append(res)
-            await asyncio.sleep(2) # Politeness delay
-        
+
+        for od in OD_PAIRS:
+            results.append(await scrape_route(page, od))
+            await asyncio.sleep(3)
+
         await browser.close()
 
-        # Save results
-        file_exists = os.path.isfile(CSV_FILE)
-        df_cols = CSV_HEADERS
-        with open(CSV_FILE, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=df_cols)
-            if not file_exists: writer.writeheader()
-            for r in all_results:
-                # Filter to only write keys present in CSV_HEADERS
-                row = {k: r.get(k, "") for k in df_cols}
-                writer.writerow(row)
+    file_exists = Path(CSV_FILE).exists()
+
+    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+        if not file_exists:
+            writer.writeheader()
+        for r in results:
+            writer.writerow(r)
+
+    print(f"\nSaved {len(results)} rows to {CSV_FILE}")
 
 if __name__ == "__main__":
     asyncio.run(main())
