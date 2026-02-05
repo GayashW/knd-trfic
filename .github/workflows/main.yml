@@ -1,15 +1,10 @@
 name: Kandy Traffic Monitor
 
 on:
-  # Manual trigger from GitHub UI or API
   workflow_dispatch:
-  
-  # Trigger on push to main branch
   push:
     branches:
       - main
-  
-  # Automated scraping every 30 minutes
   schedule:
     - cron: '*/30 * * * *'
 
@@ -35,7 +30,7 @@ jobs:
           sudo apt-get install -y libgl1 libgbm1
       
       - name: Cache pip dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
@@ -80,7 +75,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Upload CSV as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: traffic-data
           path: kandy_od_traffic.csv
