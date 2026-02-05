@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kandy Traffic Monitor - Virtual Floating Car</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        }
+        .glass-morphism {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+        }
+        .status-badge {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .data-row:hover {
+            background: rgba(59, 130, 246, 0.1);
+            transition: all 0.2s ease;
+        }
+        .metric-card {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+        }
+    </style>
+</head>
+<body class="min-h-screen text-gray-100 p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="mb-8">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h1 class="text-3xl md:text-4xl font-bold text-white mb-2">
+                        🚗 Kandy Traffic Monitor
+                    </h1>
+                    <p class="text-gray-400">Virtual Floating Car System - Real-time Traffic Intelligence</p>
+                </div>
+                <div class="flex gap-2">
+                    <button 
+                        id="configBtn"
+                        class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                    >
+                        ⚙️ Config
+                    </button>
+                    <button 
+                        id="refreshBtn"
+                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                    >
+                        🔄 Refresh
+                    </button>
+                    <button 
+                        id="triggerBtn"
+                        class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-semibold transition-colors"
+                    >
+                        ▶️ Trigger Scrape
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Configuration Modal -->
+        <div id="configModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div class="glass-morphism rounded-xl p-6 max-w-md w-full">
+                <h2 class="text-2xl font-bold mb-4">GitHub Configuration</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2">GitHub Username</label>
+                        <input 
+                            type="text" 
+                            id="githubUser" 
+                            class="w-full px-3 py-2 bg-slate-800 rounded border border-slate-600 focus:border-blue-500 focus:outline-none"
+                            placeholder="your-username"
+                        >
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">Repository Name</label>
+                        <input 
+                            type="text" 
+                            id="githubRepo" 
+                            class="w-full px-3 py-2 bg-slate-800 rounded border border-slate-600 focus:border-blue-500 focus:outline-none"
+                            placeholder="kandy-traffic-monitor"
+                        >
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">GitHub Token (for triggering)</label>
+                        <input 
+                            type="password" 
+                            id="githubToken" 
+                            class="w-full px-3 py-2 bg-slate-800 rounded border border-slate-600 focus:border-blue-500 focus:outline-none"
+                            placeholder="ghp_xxxxxxxxxxxxx"
+                        >
+                        <p class="text-xs text-gray-400 mt-1">
+                            Need workflow permissions: <code>repo</code> scope
+                        </p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button 
+                            id="saveConfigBtn"
+                            class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition-colors"
+                        >
+                            Save
+                        </button>
+                        <button 
+                            id="closeConfigBtn"
+                            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div id="statusBar" class="mb-6 p-4 glass-morphism rounded-lg hidden">
+            <div class="flex items-center gap-3">
+                <div class="status-badge w-3 h-3 rounded-full bg-blue-500"></div>
+                <span id="statusText" class="text-sm"></span>
+            </div>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="metric-card glass-morphism rounded-xl p-6">
+                <div class="text-gray-400 text-sm mb-2">Total Records</div>
+                <div id="totalRecords" class="text-3xl font-bold text-white">-</div>
+            </div>
+            <div class="metric-card glass-morphism rounded-xl p-6">
+                <div class="text-gray-400 text-sm mb-2">Avg Speed</div>
+                <div id="avgSpeed" class="text-3xl font-bold text-blue-400">-</div>
+            </div>
+            <div class="metric-card glass-morphism rounded-xl p-6">
+                <div class="text-gray-400 text-sm mb-2">Success Rate</div>
+                <div id="successRate" class="text-3xl font-bold text-green-400">-</div>
+            </div>
+            <div class="metric-card glass-morphism rounded-xl p-6">
+                <div class="text-gray-400 text-sm mb-2">Last Update</div>
+                <div id="lastUpdate" class="text-lg font-bold text-purple-400">-</div>
+            </div>
+        </div>
+
+        <!-- Traffic Data Table -->
+        <div class="glass-morphism rounded-xl overflow-hidden">
+            <div class="p-6 border-b border-slate-700">
+                <h2 class="text-xl font-bold">Traffic Data Log</h2>
+                <p class="text-sm text-gray-400 mt-1">Latest measurements (reverse chronological)</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-slate-800">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Timestamp</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Route</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Distance</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Speed</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTable" class="divide-y divide-slate-700">
+                        <tr>
+                            <td colspan="6" class="px-4 py-8 text-center text-gray-400">
+                                Loading data...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-8 text-center text-sm text-gray-500">
+            <p>Powered by GitHub Actions • Data updates every 30 minutes</p>
+            <p class="mt-1">Virtual Floating Car methodology for traffic analysis</p>
+        </footer>
+    </div>
+
+    <script>
+        // Configuration management
+        const CONFIG_KEY = 'kandy_traffic_config';
+        
+        let config = {
+            user: '',
+            repo: '',
+            token: ''
+        };
+
+        // Load config from localStorage
+        function loadConfig() {
+            const saved = localStorage.getItem(CONFIG_KEY);
+            if (saved) {
+                config = JSON.parse(saved);
+                document.getElementById('githubUser').value = config.user;
+                document.getElementById('githubRepo').value = config.repo;
+                document.getElementById('githubToken').value = config.token;
+            }
+        }
+
+        // Save config to localStorage
+        function saveConfig() {
+            config.user = document.getElementById('githubUser').value;
+            config.repo = document.getElementById('githubRepo').value;
+            config.token = document.getElementById('githubToken').value;
+            localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+            showStatus('Configuration saved', 'success');
+            closeConfigModal();
+        }
+
+        // Modal controls
+        function openConfigModal() {
+            document.getElementById('configModal').classList.remove('hidden');
+        }
+
+        function closeConfigModal() {
+            document.getElementById('configModal').classList.add('hidden');
+        }
+
+        // Status bar
+        function showStatus(message, type = 'info') {
+            const statusBar = document.getElementById('statusBar');
+            const statusText = document.getElementById('statusText');
+            statusText.textContent = message;
+            statusBar.classList.remove('hidden');
+            
+            setTimeout(() => {
+                statusBar.classList.add('hidden');
+            }, 5000);
+        }
+
+        // Trigger GitHub Actions workflow
+        async function triggerScrape() {
+            if (!config.user || !config.repo || !config.token) {
+                showStatus('Please configure GitHub settings first', 'error');
+                openConfigModal();
+                return;
+            }
+
+            const button = document.getElementById('triggerBtn');
+            button.disabled = true;
+            button.textContent = '⏳ Triggering...';
+            
+            try {
+                const response = await fetch(
+                    `https://api.github.com/repos/${config.user}/${config.repo}/dispatches`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${config.token}`,
+                            'Accept': 'application/vnd.github+json',
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            event_type: 'manual_trigger'
+                        })
+                    }
+                );
+
+                if (response.ok) {
+                    showStatus('✅ Scrape triggered successfully! Check Actions tab for progress.', 'success');
+                } else {
+                    const error = await response.text();
+                    showStatus(`❌ Failed to trigger: ${response.status} - ${error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Network error: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = '▶️ Trigger Scrape';
+            }
+        }
+
+        // Fetch and display data
+        async function loadData() {
+            if (!config.user || !config.repo) {
+                document.getElementById('dataTable').innerHTML = `
+                    <tr>
+                        <td colspan="6" class="px-4 py-8 text-center text-yellow-400">
+                            Please configure GitHub settings to view data
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            try {
+                const csvUrl = `https://raw.githubusercontent.com/${config.user}/${config.repo}/main/kandy_od_traffic.csv`;
+                const response = await fetch(csvUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const csvText = await response.text();
+                const rows = csvText.trim().split('\n');
+                
+                if (rows.length <= 1) {
+                    document.getElementById('dataTable').innerHTML = `
+                        <tr>
+                            <td colspan="6" class="px-4 py-8 text-center text-gray-400">
+                                No data available yet. Trigger a scrape to collect data.
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                // Parse CSV (skip header)
+                const data = [];
+                for (let i = 1; i < rows.length; i++) {
+                    const cols = rows[i].split(',');
+                    if (cols.length >= 9) {
+                        data.push({
+                            timestamp: cols[0],
+                            od_pair: cols[1],
+                            origin: cols[2],
+                            destination: cols[3],
+                            time_min: parseFloat(cols[4]) || null,
+                            distance_km: parseFloat(cols[5]) || null,
+                            avg_speed_kmh: parseFloat(cols[6]) || null,
+                            process_time_sec: parseFloat(cols[7]) || null,
+                            status: cols[8]
+                        });
+                    }
+                }
+
+                // Reverse to show latest first
+                data.reverse();
+
+                // Update statistics
+                updateStats(data);
+
+                // Render table (show last 50 records)
+                const tableHtml = data.slice(0, 50).map(row => {
+                    const statusColor = row.status === 'success' ? 'text-green-400' : 'text-red-400';
+                    const timestamp = new Date(row.timestamp).toLocaleString();
+                    
+                    return `
+                        <tr class="data-row">
+                            <td class="px-4 py-3 text-sm text-gray-300">${timestamp}</td>
+                            <td class="px-4 py-3 text-sm font-medium">${row.od_pair}</td>
+                            <td class="px-4 py-3 text-sm">${row.time_min ? row.time_min + ' min' : '-'}</td>
+                            <td class="px-4 py-3 text-sm">${row.distance_km ? row.distance_km.toFixed(2) + ' km' : '-'}</td>
+                            <td class="px-4 py-3 text-sm font-bold text-blue-400">${row.avg_speed_kmh ? row.avg_speed_kmh.toFixed(1) + ' km/h' : '-'}</td>
+                            <td class="px-4 py-3 text-sm ${statusColor}">${row.status}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                document.getElementById('dataTable').innerHTML = tableHtml;
+
+            } catch (error) {
+                document.getElementById('dataTable').innerHTML = `
+                    <tr>
+                        <td colspan="6" class="px-4 py-8 text-center text-red-400">
+                            Error loading data: ${error.message}<br>
+                            <span class="text-sm text-gray-400">Make sure the repository is public or token has access</span>
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Update statistics
+        function updateStats(data) {
+            // Total records
+            document.getElementById('totalRecords').textContent = data.length;
+
+            // Average speed
+            const speeds = data.filter(r => r.avg_speed_kmh).map(r => r.avg_speed_kmh);
+            const avgSpeed = speeds.length > 0 
+                ? (speeds.reduce((a, b) => a + b, 0) / speeds.length).toFixed(1) 
+                : '-';
+            document.getElementById('avgSpeed').textContent = avgSpeed !== '-' ? avgSpeed + ' km/h' : '-';
+
+            // Success rate
+            const successCount = data.filter(r => r.status === 'success').length;
+            const successRate = data.length > 0 
+                ? ((successCount / data.length) * 100).toFixed(1) 
+                : '-';
+            document.getElementById('successRate').textContent = successRate !== '-' ? successRate + '%' : '-';
+
+            // Last update
+            if (data.length > 0) {
+                const lastTime = new Date(data[0].timestamp);
+                const now = new Date();
+                const diffMinutes = Math.floor((now - lastTime) / 60000);
+                
+                let timeAgo;
+                if (diffMinutes < 1) {
+                    timeAgo = 'Just now';
+                } else if (diffMinutes < 60) {
+                    timeAgo = diffMinutes + 'm ago';
+                } else if (diffMinutes < 1440) {
+                    timeAgo = Math.floor(diffMinutes / 60) + 'h ago';
+                } else {
+                    timeAgo = Math.floor(diffMinutes / 1440) + 'd ago';
+                }
+                
+                document.getElementById('lastUpdate').textContent = timeAgo;
+            }
+        }
+
+        // Event listeners
+        document.getElementById('configBtn').addEventListener('click', openConfigModal);
+        document.getElementById('closeConfigBtn').addEventListener('click', closeConfigModal);
+        document.getElementById('saveConfigBtn').addEventListener('click', saveConfig);
+        document.getElementById('triggerBtn').addEventListener('click', triggerScrape);
+        document.getElementById('refreshBtn').addEventListener('click', loadData);
+
+        // Initialize
+        loadConfig();
+        loadData();
+
+        // Auto-refresh every 5 minutes
+        setInterval(loadData, 5 * 60 * 1000);
+    </script>
+</body>
+</html>
