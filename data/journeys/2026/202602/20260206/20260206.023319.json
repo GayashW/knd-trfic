@@ -1,0 +1,159 @@
+{
+  "timestamp_utc": "2026-02-06T02:33:19.493886",
+  "routes": {
+    "Peradeniya-to-KMTT": [
+      {
+        "segment_index": 1,
+        "origin": [
+          6.895575,
+          79.854851
+        ],
+        "destination": [
+          6.8908226,
+          79.8607936
+        ],
+        "distance_m": 842.38,
+        "eta_min": 4,
+        "avg_speed_kmh": 12.64,
+        "status": "success"
+      },
+      {
+        "segment_index": 2,
+        "origin": [
+          6.8908226,
+          79.8607936
+        ],
+        "destination": [
+          6.8860702,
+          79.86673619999999
+        ],
+        "distance_m": 842.38,
+        "eta_min": 5,
+        "avg_speed_kmh": 10.11,
+        "status": "success"
+      },
+      {
+        "segment_index": 3,
+        "origin": [
+          6.8860702,
+          79.86673619999999
+        ],
+        "destination": [
+          6.881317800000001,
+          79.8726788
+        ],
+        "distance_m": 842.39,
+        "eta_min": 4,
+        "avg_speed_kmh": 12.64,
+        "status": "success"
+      },
+      {
+        "segment_index": 4,
+        "origin": [
+          6.881317800000001,
+          79.8726788
+        ],
+        "destination": [
+          6.8765654000000005,
+          79.8786214
+        ],
+        "distance_m": 842.39,
+        "eta_min": 7,
+        "avg_speed_kmh": 7.22,
+        "status": "success"
+      },
+      {
+        "segment_index": 5,
+        "origin": [
+          6.8765654000000005,
+          79.8786214
+        ],
+        "destination": [
+          6.871813,
+          79.884564
+        ],
+        "distance_m": 842.4,
+        "eta_min": 4,
+        "avg_speed_kmh": 12.64,
+        "status": "success"
+      }
+    ],
+    "Temple-to-Railway": [
+      {
+        "segment_index": 1,
+        "origin": [
+          6.9271,
+          79.8612
+        ],
+        "destination": [
+          6.934060000000001,
+          79.86542
+        ],
+        "distance_m": 903.29,
+        "eta_min": 4,
+        "avg_speed_kmh": 13.55,
+        "status": "success"
+      },
+      {
+        "segment_index": 2,
+        "origin": [
+          6.934060000000001,
+          79.86542
+        ],
+        "destination": [
+          6.94102,
+          79.86964
+        ],
+        "distance_m": 903.28,
+        "eta_min": 5,
+        "avg_speed_kmh": 10.84,
+        "status": "success"
+      },
+      {
+        "segment_index": 3,
+        "origin": [
+          6.94102,
+          79.86964
+        ],
+        "destination": [
+          6.94798,
+          79.87386
+        ],
+        "distance_m": 903.28,
+        "eta_min": 6,
+        "avg_speed_kmh": 9.03,
+        "status": "success"
+      },
+      {
+        "segment_index": 4,
+        "origin": [
+          6.94798,
+          79.87386
+        ],
+        "destination": [
+          6.95494,
+          79.87808
+        ],
+        "distance_m": 903.28,
+        "eta_min": 10,
+        "avg_speed_kmh": 5.42,
+        "status": "success"
+      },
+      {
+        "segment_index": 5,
+        "origin": [
+          6.95494,
+          79.87808
+        ],
+        "destination": [
+          6.9619,
+          79.8823
+        ],
+        "distance_m": 903.27,
+        "eta_min": 6,
+        "avg_speed_kmh": 9.03,
+        "status": "success"
+      }
+    ]
+  }
+}
