@@ -10,6 +10,7 @@ import math
 import time
 from pathlib import Path
 from datetime import datetime
+import re
 
 from playwright.async_api import async_playwright
 
@@ -21,7 +22,7 @@ SCREENSHOT_DIR = Path("screenshots")
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 
 MAX_SEGMENT_LENGTH_M = 10  # debug: 10m segments
-MAX_RETRIES = 2
+MAX_RETRIES = 3
 
 ROUTES = [
     {"name": "Peradeniya-to-KMTT", "origin": (6.895575, 79.854851), "destination": (6.871813, 79.884564)},
@@ -55,6 +56,7 @@ def haversine(lat1, lon1, lat2, lon2):
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
     a = math.sin(d_phi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(d_lambda/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
 def interpolate_segments(lat1, lon1, lat2, lon2, max_len_m=10):
@@ -73,7 +75,9 @@ def interpolate_segments(lat1, lon1, lat2, lon2, max_len_m=10):
 def generate_segments(routes):
     all_segments = []
     for route in routes:
-        segments = interpolate_segments(route["origin"][0], route["origin"][1], route["destination"][0], route["destination"][1], MAX_SEGMENT_LENGTH_M)
+        segments = interpolate_segments(route["origin"][0], route["origin"][1],
+                                        route["destination"][0], route["destination"][1],
+                                        MAX_SEGMENT_LENGTH_M)
         for idx, (olat, olon, dlat, dlon) in enumerate(segments):
             seg_id = f"{route['name'].replace(' ', '_')}_seg_{idx+1}"
             all_segments.append({
@@ -87,7 +91,8 @@ def generate_segments(routes):
             })
     return all_segments
 
-# Save or load segments
+# ---------------- LOAD OR GENERATE SEGMENTS ----------------
+
 if not SEGMENTS_FILE.exists():
     segments = generate_segments(ROUTES)
     with open(SEGMENTS_FILE, "w", newline="", encoding="utf-8") as f:
@@ -140,21 +145,21 @@ async def scrape_segment(page, segment):
 
     for attempt in range(1, MAX_RETRIES+1):
         try:
-            print(f"[{segment['od_pair']}] Segment {segment['segment_id']} → Loading page")
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            print(f"[{segment['od_pair']}] {segment['segment_id']} → Loading page ({attempt})")
+            await page.goto(url, wait_until="networkidle", timeout=120000)
             await handle_consent(page)
-            await page.wait_for_selector("div[role='main']", timeout=60000)
+            await page.wait_for_selector("button.m6Uuef", timeout=60000)
             await page.wait_for_timeout(2000)
 
-            # --- extract multi-modal ETAs from buttons ---
             buttons = page.locator("button.m6Uuef")
             count = await buttons.count()
+            print(f"[DEBUG] Found {count} travel mode buttons")
+
             for i in range(count):
                 b = buttons.nth(i)
                 mode = await b.get_attribute("data-tooltip")
                 eta_text = await b.locator("div.Fl2iee.HNPWFe").inner_text()
 
-                import re
                 total_min = 0
                 h = re.search(r"(\d+)\s*h", eta_text)
                 m = re.search(r"(\d+)\s*min", eta_text)
@@ -204,6 +209,7 @@ async def main():
         for segment in segments[:5]:
             res = await scrape_segment(page, segment)
             results.append(res)
+            print(f"[INFO] Scraped {segment['segment_id']} → status: {res['status']}")
             await asyncio.sleep(1)
 
         await browser.close()
