@@ -1,38 +1,30 @@
 #!/usr/bin/env python3
 """
-Kandy Traffic Monitor - Multi-modal ETA
-Debug mode – limited segmentation, JSON output
+Kandy Traffic Monitor - Multi-modal ETA Scraper
+Debug mode: 5 segments per route
+Extracts all modes from a single URL per segment.
 """
 
 import asyncio
 import json
 import math
-import time
 import re
+import time
 from pathlib import Path
 from datetime import datetime
-
 from playwright.async_api import async_playwright
 
 # ---------------- CONFIG ----------------
 
-MAX_SEGMENTS_PER_ROUTE = 5   # 🔧 DEBUG LIMIT (5–10 recommended)
+MAX_SEGMENTS_PER_ROUTE = 5  # Debug: limit segments
 THROTTLE_SEC = 1
-MAX_RETRIES = 2
-
-DATA_ROOT = Path("data/journeys")
+MAX_RETRIES = 3
+SCREENSHOT_DIR = Path("screenshots")
+SCREENSHOT_DIR.mkdir(exist_ok=True)
 
 ROUTES = [
-    {
-        "name": "Peradeniya-to-KMTT",
-        "origin": (6.895575, 79.854851),
-        "destination": (6.871813, 79.884564),
-    },
-    {
-        "name": "Temple-to-Railway",
-        "origin": (6.9271, 79.8612),
-        "destination": (6.9619, 79.8823),
-    },
+    {"name": "Peradeniya-to-KMTT", "origin": (6.895575, 79.854851), "destination": (6.871813, 79.884564)},
+    {"name": "Temple-to-Railway", "origin": (6.9271, 79.8612), "destination": (6.9619, 79.8823)},
 ]
 
 # ---------------- LOGGING ----------------
@@ -64,97 +56,103 @@ def interpolate_segments(o, d, limit):
 
 # ---------------- SCRAPER ----------------
 
-async def scrape_segment(context, page, route, seg_idx, seg):
+async def scrape_segment(context, page, route_name, seg_idx, seg):
     url = f"https://www.google.com/maps/dir/{seg[0]},{seg[1]}/{seg[2]},{seg[3]}/"
     log(f"[GoogleMaps] 🌐 {url}")
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_selector("div[role='main']", timeout=60000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            await page.wait_for_selector("button.m6Uuef", timeout=90000)
             await page.wait_for_timeout(2000)
 
-            # --- extract multi-modal ETAs from buttons ---
+            buttons = page.locator("button.m6Uuef")
+            count = await buttons.count()
             result = {
                 "segment_index": seg_idx,
                 "origin": [seg[0], seg[1]],
                 "destination": [seg[2], seg[3]],
                 "distance_m": round(haversine(seg[0], seg[1], seg[2], seg[3]), 2),
-                "status": "success",
-                "eta_min": {},
-                "avg_speed_kmh": {},
+                "driving_min": None,
+                "walking_min": None,
+                "bicycling_min": None,
+                "transit_min": None,
+                "two_wheeler_min": None,
+                "status": "failed",
             }
-
-            buttons = page.locator("button.m6Uuef")
-            count = await buttons.count()
 
             for i in range(count):
                 b = buttons.nth(i)
                 mode = await b.get_attribute("data-tooltip")
                 eta_text = await b.locator("div.Fl2iee.HNPWFe").inner_text()
-
+                
                 total_min = 0
                 h = re.search(r"(\d+)\s*h", eta_text)
                 m = re.search(r"(\d+)\s*min", eta_text)
                 if h: total_min += int(h.group(1)) * 60
                 if m: total_min += int(m.group(1))
 
-                if total_min > 0:
-                    result["eta_min"][mode.lower()] = total_min
-                    result["avg_speed_kmh"][mode.lower()] = round((result["distance_m"] / 1000) / (total_min / 60), 2)
+                mode_lower = mode.lower() if mode else ""
+                if mode_lower == "driving":
+                    result["driving_min"] = total_min
+                elif mode_lower == "walking":
+                    result["walking_min"] = total_min
+                elif mode_lower == "bicycling":
+                    result["bicycling_min"] = total_min
+                elif mode_lower == "transit":
+                    result["transit_min"] = total_min
+                elif mode_lower in ["two-wheeler", "motorbike"]:
+                    result["two_wheeler_min"] = total_min
 
-                log(f"[{mode}] ⏱ ETA={total_min} min | Speed={result['avg_speed_kmh'].get(mode.lower(), 0)} km/h")
+                log(f"[{mode}] ⏱ ETA={total_min} min")
 
+            result["status"] = "success"
             return result
 
         except Exception as e:
             log(f"❌ Attempt {attempt} failed: {e}")
             if attempt == MAX_RETRIES:
-                return {"segment_index": seg_idx, "status": f"failed: {str(e)[:40]}"}
-            await page.wait_for_timeout(2000)
+                screenshot = SCREENSHOT_DIR / f"{route_name}_seg{seg_idx}.png"
+                await page.screenshot(path=screenshot)
+            else:
+                log(f"⏳ Retrying after delay...")
+                await asyncio.sleep(3)
+
+    return {"segment_index": seg_idx, "status": "failed"}
 
 # ---------------- MAIN ----------------
 
 async def main():
     now = datetime.utcnow()
-    date_path = DATA_ROOT / now.strftime("%Y/%Y%m/%Y%m%d")
-    date_path.mkdir(parents=True, exist_ok=True)
-    outfile = date_path / f"{now.strftime('%Y%m%d.%H%M%S')}.json"
-
-    all_results = {
+    results = {
         "timestamp_utc": now.isoformat(),
-        "routes": {},
+        "routes": {}
     }
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
         context = await browser.new_context(locale="en-US")
         page = await context.new_page()
 
         for route in ROUTES:
             log(f"🚗 Route: {route['name']}")
-            segments = interpolate_segments(
-                route["origin"],
-                route["destination"],
-                MAX_SEGMENTS_PER_ROUTE,
-            )
-
+            segments = interpolate_segments(route["origin"], route["destination"], MAX_SEGMENTS_PER_ROUTE)
             route_results = []
+
             for i, seg in enumerate(segments, 1):
                 log(f"[{route['name']}] Segment {i}/{len(segments)}")
-                res = await scrape_segment(context, page, route, i, seg)
+                res = await scrape_segment(context, page, route["name"], i, seg)
                 route_results.append(res)
                 await asyncio.sleep(THROTTLE_SEC)
 
-            all_results["routes"][route["name"]] = route_results
+            results["routes"][route["name"]] = route_results
 
         await browser.close()
 
-    outfile.write_text(json.dumps(all_results, indent=2))
-    log(f"[Saved] {outfile} ({outfile.stat().st_size} B)")
+    # Save results as JSON
+    out_file = Path(f"kandy_multi_mode_{now.strftime('%Y%m%d_%H%M%S')}.json")
+    out_file.write_text(json.dumps(results, indent=2))
+    log(f"[Saved] {out_file} ({out_file.stat().st_size} B)")
 
 if __name__ == "__main__":
     asyncio.run(main())
