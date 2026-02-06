@@ -13,15 +13,15 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout repo
+      - name: ⬇️ Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install system libraries
+      - name: 🧱 Install system libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -34,25 +34,27 @@ jobs:
             libpangocairo-1.0-0 libpango-1.0-0 \
             libgtk-3-0 libxshmfence1 libgl1
 
-      - name: Install Python deps
+      - name: 📦 Install Python deps
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium
 
-      - name: Run scraper
+      - name: 🚗 Run scraper
         run: python main.py
 
-      - name: Commit traffic data
+      - name: ⬆️ Push data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add kandy_segment_speeds.csv kandy_segments.csv
+          git add data/
 
-          if [[ -n "$(git status --porcelain)" ]]; then
-            git commit -m "Update Kandy traffic data ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-            git push
-          else
-            echo "No changes to commit"
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
           fi
+
+          git commit -m "🤖 Traffic data $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git pull origin main --rebase
+          git push origin main
