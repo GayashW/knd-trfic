@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kandy Traffic Monitor
+Kandy Traffic Monitor - Multi-modal ETA
 Debug mode – limited segmentation, JSON output
 """
 
@@ -74,43 +74,44 @@ async def scrape_segment(context, page, route, seg_idx, seg):
             await page.wait_for_selector("div[role='main']", timeout=60000)
             await page.wait_for_timeout(2000)
 
-            text = await page.inner_text("div[role='main']")
-            m = re.search(r"\d+\s*(?:h\s*)?\d*\s*min", text)
-            if not m:
-                raise ValueError("ETA not found")
-
-            t = m.group(0)
-            h = re.search(r"(\d+)\s*h", t)
-            m2 = re.search(r"(\d+)\s*min", t)
-
-            minutes = (int(h.group(1)) * 60 if h else 0) + (int(m2.group(1)) if m2 else 0)
-            if minutes <= 0:
-                raise ValueError("Invalid ETA")
-
-            dist_m = haversine(seg[0], seg[1], seg[2], seg[3])
-            speed = round((dist_m / 1000) / (minutes / 60), 2)
-
-            log(f"[Journey] ⏱ ETA={minutes} min | Speed={speed} km/h")
-
-            return {
+            # --- extract multi-modal ETAs from buttons ---
+            result = {
                 "segment_index": seg_idx,
                 "origin": [seg[0], seg[1]],
                 "destination": [seg[2], seg[3]],
-                "distance_m": round(dist_m, 2),
-                "eta_min": minutes,
-                "avg_speed_kmh": speed,
+                "distance_m": round(haversine(seg[0], seg[1], seg[2], seg[3]), 2),
                 "status": "success",
+                "eta_min": {},
+                "avg_speed_kmh": {},
             }
+
+            buttons = page.locator("button.m6Uuef")
+            count = await buttons.count()
+
+            for i in range(count):
+                b = buttons.nth(i)
+                mode = await b.get_attribute("data-tooltip")
+                eta_text = await b.locator("div.Fl2iee.HNPWFe").inner_text()
+
+                total_min = 0
+                h = re.search(r"(\d+)\s*h", eta_text)
+                m = re.search(r"(\d+)\s*min", eta_text)
+                if h: total_min += int(h.group(1)) * 60
+                if m: total_min += int(m.group(1))
+
+                if total_min > 0:
+                    result["eta_min"][mode.lower()] = total_min
+                    result["avg_speed_kmh"][mode.lower()] = round((result["distance_m"] / 1000) / (total_min / 60), 2)
+
+                log(f"[{mode}] ⏱ ETA={total_min} min | Speed={result['avg_speed_kmh'].get(mode.lower(), 0)} km/h")
+
+            return result
 
         except Exception as e:
             log(f"❌ Attempt {attempt} failed: {e}")
-            if "crashed" in str(e).lower():
-                page = await context.new_page()
-
-    return {
-        "segment_index": seg_idx,
-        "status": "failed",
-    }
+            if attempt == MAX_RETRIES:
+                return {"segment_index": seg_idx, "status": f"failed: {str(e)[:40]}"}
+            await page.wait_for_timeout(2000)
 
 # ---------------- MAIN ----------------
 
@@ -118,7 +119,6 @@ async def main():
     now = datetime.utcnow()
     date_path = DATA_ROOT / now.strftime("%Y/%Y%m/%Y%m%d")
     date_path.mkdir(parents=True, exist_ok=True)
-
     outfile = date_path / f"{now.strftime('%Y%m%d.%H%M%S')}.json"
 
     all_results = {
