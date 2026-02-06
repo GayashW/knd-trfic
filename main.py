@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Kandy Traffic Segment Monitor (DEBUG MODE)
+Kandy Traffic Segment Monitor
+Debug-stable version with verbose logging
 """
 
 import asyncio
@@ -11,7 +12,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-from playwright.async_api import async_playwright, Error as PlaywrightError
+from playwright.async_api import async_playwright
 
 # ---------------- CONFIG ----------------
 
@@ -20,9 +21,9 @@ OUTPUT_FILE = Path("kandy_segment_speeds.csv")
 SCREENSHOT_DIR = Path("screenshots")
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 
-MAX_SEGMENT_LENGTH_M = 100   # 🔧 DEBUG: reduced workload
+MAX_SEGMENT_LENGTH_M = 100   # 🔧 DEBUG / REDUCED LOAD
 MAX_RETRIES = 2
-DEBUG = True
+THROTTLE_SEC = 1
 
 ROUTES = [
     {
@@ -52,39 +53,40 @@ CSV_HEADERS = [
     "status",
 ]
 
-# ---------------- UTILITIES ----------------
+# ---------------- LOGGING ----------------
 
 def log(msg):
     ts = datetime.utcnow().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+# ---------------- UTILITIES ----------------
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
-    a = math.sin(d_phi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(d_lambda/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
 def interpolate_segments(lat1, lon1, lat2, lon2, max_len_m):
     dist = haversine(lat1, lon1, lat2, lon2)
-    num = max(1, math.ceil(dist / max_len_m))
-    segments = []
-    for i in range(num):
-        segments.append((
-            lat1 + (lat2 - lat1) * i / num,
-            lon1 + (lon2 - lon1) * i / num,
-            lat1 + (lat2 - lat1) * (i + 1) / num,
-            lon1 + (lon2 - lon1) * (i + 1) / num,
+    n = max(1, math.ceil(dist / max_len_m))
+    segs = []
+    for i in range(n):
+        segs.append((
+            lat1 + (lat2 - lat1) * i / n,
+            lon1 + (lon2 - lon1) * i / n,
+            lat1 + (lat2 - lat1) * (i + 1) / n,
+            lon1 + (lon2 - lon1) * (i + 1) / n,
         ))
-    return segments
+    return segs
 
 # ---------------- SEGMENT GENERATION ----------------
 
-def generate_segments(routes):
-    all_segments = []
-    for route in routes:
+def generate_segments():
+    segments = []
+    for route in ROUTES:
         segs = interpolate_segments(
             route["origin"][0],
             route["origin"][1],
@@ -92,9 +94,9 @@ def generate_segments(routes):
             route["destination"][1],
             MAX_SEGMENT_LENGTH_M,
         )
-        for i, (olat, olon, dlat, dlon) in enumerate(segs):
-            all_segments.append({
-                "segment_id": f"{route['name'].replace(' ', '_')}_seg_{i+1}",
+        for i, (olat, olon, dlat, dlon) in enumerate(segs, 1):
+            segments.append({
+                "segment_id": f"{route['name'].replace(' ', '_')}_seg_{i}",
                 "od_pair": route["name"],
                 "origin_lat": olat,
                 "origin_lng": olon,
@@ -102,27 +104,26 @@ def generate_segments(routes):
                 "destination_lng": dlon,
                 "distance_m": round(haversine(olat, olon, dlat, dlon), 2),
             })
-    return all_segments
+    return segments
 
 if not SEGMENTS_FILE.exists():
-    segments = generate_segments(ROUTES)
+    segments = generate_segments()
     with open(SEGMENTS_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=segments[0].keys())
-        writer.writeheader()
-        writer.writerows(segments)
-    log(f"Generated {len(segments)} segments")
+        w = csv.DictWriter(f, fieldnames=segments[0].keys())
+        w.writeheader()
+        w.writerows(segments)
+    log(f"Generated {len(segments)} segments → {SEGMENTS_FILE}")
 else:
-    log("Loading segments from CSV")
     segments = []
     with open(SEGMENTS_FILE, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for r in reader:
+        r = csv.DictReader(f)
+        for row in r:
             for k in ["origin_lat", "origin_lng", "destination_lat", "destination_lng", "distance_m"]:
-                r[k] = float(r[k])
-            segments.append(r)
-    log(f"Loaded {len(segments)} segments")
+                row[k] = float(row[k])
+            segments.append(row)
+    log(f"Loaded {len(segments)} segments from CSV")
 
-# ---------------- SCRAPER ----------------
+# ---------------- PLAYWRIGHT HELPERS ----------------
 
 async def handle_consent(page):
     for frame in page.frames:
@@ -132,17 +133,24 @@ async def handle_consent(page):
                 await btn.first.click()
                 await page.wait_for_timeout(1500)
 
-async def scrape_segment(context, page, segment, index, total):
-    log(f"[{index}/{total}] {segment['segment_id']} START")
-    t0 = time.time()
+# ---------------- SCRAPER ----------------
 
-    url = f"https://www.google.com/maps/dir/{segment['origin_lat']},{segment['origin_lng']}/{segment['destination_lat']},{segment['destination_lng']}/"
+async def scrape_segment(context, page, segment, idx, total):
+    start = time.time()
+
+    url = (
+        f"https://www.google.com/maps/dir/"
+        f"{segment['origin_lat']},{segment['origin_lng']}/"
+        f"{segment['destination_lat']},{segment['destination_lng']}/"
+    )
+
+    log(f"[{idx}/{total}] {segment['segment_id']} START")
+    log(f"[GoogleMaps] 🌐 {url}")
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             log(f"  → Attempt {attempt} | goto()")
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-
             await handle_consent(page)
             await page.wait_for_selector("div[role='main']", timeout=60000)
             await page.wait_for_timeout(2000)
@@ -154,22 +162,22 @@ async def scrape_segment(context, page, segment, index, total):
 
             text = m.group(0)
             h = re.search(r"(\d+)\s*h", text)
-            m_ = re.search(r"(\d+)\s*min", text)
+            m2 = re.search(r"(\d+)\s*min", text)
 
-            minutes = (int(h.group(1)) * 60 if h else 0) + (int(m_.group(1)) if m_ else 0)
-            if minutes == 0:
-                raise ValueError("Parsed ETA = 0")
+            minutes = (int(h.group(1)) * 60 if h else 0) + (int(m2.group(1)) if m2 else 0)
+            if minutes <= 0:
+                raise ValueError("Parsed ETA invalid")
 
             speed = round((segment["distance_m"] / 1000) / (minutes / 60), 2)
 
-            log(f"  ✔ ETA={minutes} min | speed={speed} km/h")
+            log(f"[Journey] ⏱ ETA={minutes} min | Speed={speed} km/h")
 
             return {
                 **segment,
                 "timestamp_utc": datetime.utcnow().isoformat(),
                 "time_min": minutes,
                 "avg_speed_kmh": speed,
-                "process_time_sec": round(time.time() - t0, 2),
+                "process_time_sec": round(time.time() - start, 2),
                 "status": "success",
             }
 
@@ -190,7 +198,7 @@ async def scrape_segment(context, page, segment, index, total):
                     "timestamp_utc": datetime.utcnow().isoformat(),
                     "time_min": None,
                     "avg_speed_kmh": None,
-                    "process_time_sec": round(time.time() - t0, 2),
+                    "process_time_sec": round(time.time() - start, 2),
                     "status": f"error: {str(e)[:50]}",
                 }
 
@@ -220,11 +228,10 @@ async def main():
 
         page = await context.new_page()
 
-        total = len(segments)
         for i, seg in enumerate(segments, 1):
-            res = await scrape_segment(context, page, seg, i, total)
+            res = await scrape_segment(context, page, seg, i, len(segments))
             results.append(res)
-            await asyncio.sleep(1)
+            await asyncio.sleep(THROTTLE_SEC)
 
         await browser.close()
 
@@ -236,7 +243,7 @@ async def main():
             w.writeheader()
         w.writerows(results)
 
-    log(f"Saved {len(results)} rows")
+    log(f"Saved {len(results)} rows → {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     asyncio.run(main())
