@@ -1,0 +1,49 @@
+{
+  "timestamp_utc": "2026-02-15T20:19:37.795344",
+  "routes": {
+    "Peradeniya-to-KMTT": [
+      {
+        "segment_index": 1,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 2,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 3,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 4,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 5,
+        "status": "failed: Timeout 30000ms exceeded."
+      }
+    ],
+    "Temple-to-Railway": [
+      {
+        "segment_index": 1,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 2,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 3,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 4,
+        "status": "failed: Timeout 30000ms exceeded."
+      },
+      {
+        "segment_index": 5,
+        "status": "failed: Timeout 30000ms exceeded."
+      }
+    ]
+  }
+}
